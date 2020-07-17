@@ -13,9 +13,10 @@ The rough dataflow will look like:
 - [x] Write script to create interesting materialized views
 - [x] Figure out how to tail messages from the console
 - [x] Get tail working in vanilla Python
-- [ ] Spin up tornado plus a single javascript page to splat data onto the screen
+- [x] Spin up tornado to splat data onto the screen
 - [x] What's a good dataset to show this off?
 - [x] Come up with a few interesting materialized views.
+- [ ] Figure out how to use tail with Momoko
 - [ ] Perhaps visualize the results of the various views?
 
 - [ ] Stretch Goal -- Stream Materialize internal tables to browser too
