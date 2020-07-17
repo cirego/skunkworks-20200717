@@ -9,12 +9,16 @@ The rough dataflow will look like:
 
 ## TODO
 
-- [ ] Spin up materialized and ingest data
+- [x] Spin up materialized and ingest wikipedia data
+- [x] Write script to create interesting materialized views
+- [x] Figure out how to tail messages from the console
 - [ ] Spin up tornado plus a single javascript page to splat data onto the screen
 - [ ] What's a good dataset to show this off?
 - [ ] Come up with a few interesting materialized views.
 - [ ] Can we find two datasets that are good to show off joins?
 - [ ] Perhaps visualize the results of the various views?
+
+- [ ] Stretch Goal -- Stream Materialize internal tables to browser too
 
 ## Web Server Logic
 

@@ -1,0 +1,3 @@
+#!/usr/bin/env
+
+psql -h localhost -p 6875 -f db/views.sql materialize
