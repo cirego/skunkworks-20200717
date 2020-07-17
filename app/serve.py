@@ -2,6 +2,7 @@
 
 import logging
 import os
+import pprint
 import sys
 
 import momoko
@@ -12,7 +13,18 @@ import tornado.web
 
 log = logging.getLogger('wikipedia_live.main')
 
+
+class Listeners:
+
+    def write(self, table_name, json_payload):
+        print('Received delta for table {}: {}'.format(table_name, json_payload))
+
+
 class BaseHandler(tornado.web.RequestHandler):
+
+    @property
+    def listeners(self):
+        return self.application.listeners
 
     @property
     def mzql(self):
@@ -26,9 +38,16 @@ class IndexHandler(BaseHandler):
         counts_cursor = await self.mzql.execute('SELECT * FROM counter')
         edit_count = counts_cursor.fetchone()[0]
 
-        editors_cursor = await self.mzql.execute('SELECT * FROM top10')
+        editors_cursor = await self.mzql.execute('SELECT * FROM top10 ORDER BY count DESC')
         editors = [(name, count) for (name, count) in editors_cursor]
         self.render('index.html', edit_count=edit_count, editors=editors)
+
+
+class UpdateHandler(BaseHandler):
+
+    async def post(self, table_name):
+        delta = tornado.escape.json_decode(self.request.body)
+        self.listeners.write(table_name, delta)
 
 
 def configure_logging():
@@ -39,7 +58,8 @@ def run():
     configure_logging()
 
     handlers = [
-        tornado.web.url(r'/', IndexHandler, name='index')
+        tornado.web.url(r'/', IndexHandler, name='index'),
+        tornado.web.url(r'/api/v1/(.*)', UpdateHandler, name='index'),
     ]
 
     base_dir = os.path.dirname(__file__)
@@ -51,9 +71,9 @@ def run():
                                   template_path=template_path,
                                   debug=True)
 
-    app_id = 'wikipedia_live_dashboard'
-    dsn = 'host=localhost port=6875 dbname=materialize'
+    app.listeners = Listeners()
 
+    dsn = 'host=localhost port=6875 dbname=materialize'
     app.mzql = momoko.Pool(dsn=dsn)
 
     # Connect Momoko before starting Tornado's event loop

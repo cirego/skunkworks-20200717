@@ -16,11 +16,16 @@ The rough dataflow will look like:
 - [x] Spin up tornado to splat data onto the screen
 - [x] What's a good dataset to show this off?
 - [x] Come up with a few interesting materialized views.
-- [ ] Figure out how to use tail with Momoko
+- [x] Pipe output from `copy_expert` into a program that posts messages to tornado
+- [ ] Write some javascript to receive these messages
 - [ ] Perhaps visualize the results of the various views?
 
 - [ ] Stretch Goal -- Stream Materialize internal tables to browser too
 - [ ] Can we find two datasets that are good to show off joins?
+
+## Not a Priority Anymore
+
+- [ ] Figure out how to use tail with Momoko
 
 ## Web Server Logic
 
