@@ -23,5 +23,31 @@
             </tbody>
         </table>
     </div>
+
+    <script type="text/javascript">
+        "use strict";
+
+        var path = "ws://" + location.host + "{{reverse_url('api/stream', 'counter')}}";
+        var connection = new WebSocket(path);
+
+        connection.onmessage = function(event) {
+                var data = JSON.parse(event.data);
+                console.log(data);
+        }
+
+    </script>
+
+    <script type="text/javascript">
+        "use strict";
+
+        var path = "ws://" + location.host + "{{reverse_url('api/stream', 'top10')}}";
+        var connection = new WebSocket(path);
+
+        connection.onmessage = function(event) {
+                var data = JSON.parse(event.data);
+                console.log(data);
+        }
+
+    </script>
   </body>
 </html>

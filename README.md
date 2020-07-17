@@ -17,7 +17,8 @@ The rough dataflow will look like:
 - [x] What's a good dataset to show this off?
 - [x] Come up with a few interesting materialized views.
 - [x] Pipe output from `copy_expert` into a program that posts messages to tornado
-- [ ] Write some javascript to receive these messages
+- [x] Write some javascript to receive these messages
+- [x] Write some javascript to update HTML on these messages!
 - [ ] Perhaps visualize the results of the various views?
 
 - [ ] Stretch Goal -- Stream Materialize internal tables to browser too

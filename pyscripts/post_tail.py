@@ -16,7 +16,7 @@ def main(table):
     for line in sys.stdin:
         (columns, operation, timestamp) = parse(line)
         payload = {'columns': columns, 'operation': operation, 'timestamp': timestamp}
-        requests.post('http://localhost:8875/api/v1/{}'.format(table), json=payload)
+        requests.post('http://localhost:8875/api/v1/update/{}'.format(table), json=payload)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

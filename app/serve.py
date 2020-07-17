@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import collections
 import logging
 import os
 import pprint
@@ -10,14 +11,48 @@ import psycopg2
 import tornado.ioloop
 import tornado.platform.asyncio
 import tornado.web
+import tornado.websocket
 
 log = logging.getLogger('wikipedia_live.main')
 
 
 class Listeners:
 
-    def write(self, table_name, json_payload):
-        print('Received delta for table {}: {}'.format(table_name, json_payload))
+    def __init__(self):
+        self.listeners = collections.defaultdict(set)
+
+    def add(self, table_name, conn):
+        """Insert this connection into the list that will be notified on new messages."""
+        self.listeners[table_name].add(conn)
+
+    def broadcast(self, table_name, payload):
+        """Write the message to all listeners. May remove closed connections."""
+        if table_name not in self.listeners:
+            return
+
+        closed_listeners = set()
+        for listener in self.listeners[table_name]:
+            try:
+                listener.write_message(payload)
+            except tornado.websocket.WebSocketClosedError:
+                closed_listeners.add(listener)
+
+        for closed_listener in closed_listeners:
+            self.listeners.remove(closed_listener)
+
+    def remove(self, table_name, conn):
+        """Remove this connection from the list that will be notified on new messages."""
+        try:
+            self.listeners[table_name].remove(conn)
+        except KeyError:
+            pass
+
+
+class BaseWebSocketHandler(tornado.websocket.WebSocketHandler):
+
+    @property
+    def listeners(self):
+        return self.application.listeners
 
 
 class BaseHandler(tornado.web.RequestHandler):
@@ -43,11 +78,22 @@ class IndexHandler(BaseHandler):
         self.render('index.html', edit_count=edit_count, editors=editors)
 
 
+class StreamHandler(BaseWebSocketHandler):
+
+    def open(self, table):
+        self.table_name = table
+        self.listeners.add(self.table_name, self)
+
+    def on_close(self):
+        self.listeners.remove(self.table_name, self)
+
+
 class UpdateHandler(BaseHandler):
 
     async def post(self, table_name):
         delta = tornado.escape.json_decode(self.request.body)
-        self.listeners.write(table_name, delta)
+        payload = {'table': table_name, 'delta': delta}
+        self.listeners.broadcast(table_name, payload)
 
 
 def configure_logging():
@@ -59,7 +105,8 @@ def run():
 
     handlers = [
         tornado.web.url(r'/', IndexHandler, name='index'),
-        tornado.web.url(r'/api/v1/(.*)', UpdateHandler, name='index'),
+        tornado.web.url(r'/api/v1/stream/(.*)', StreamHandler, name='api/stream'),
+        tornado.web.url(r'/api/v1/update/(.*)', UpdateHandler, name='api/update'),
     ]
 
     base_dir = os.path.dirname(__file__)
