@@ -3,7 +3,7 @@
     <title>{% block title %}Wikipedia Live Edits!{% end %}</title>
   </head>
   <body>
-    <div id="edit counts"><h1>{{edit_count}} Edits Made!</h1></div>
+      <div id="edit counts"><h1><span id="counter">{{edit_count}}</span> Edits Made!</h1></div>
     <div id="title"><h1>Top 10 Editors</h1></div>
     <div id="top10 editors">
         <table>
@@ -32,7 +32,9 @@
 
         connection.onmessage = function(event) {
                 var data = JSON.parse(event.data);
-                console.log(data);
+                if (data['delta']['operation'] == 'inserted') {
+                    document.getElementById("counter").innerHTML = data['delta']['columns'][0]
+                }
         }
 
     </script>
