@@ -1,11 +1,55 @@
 # Streaming Materialize Updates to the Browser
 
+## Original Plan
+
 For today's Skunkworks project, I'm going to be showing how to continuously tail a materialized
 view and stream the results directly to one or more users' browsers.
 
 The rough dataflow will look like:
 
     source -> materialized <- tornado <- clients
+
+## Where Did I End Up?
+
+I was able to create an end-to-end, event driven streaming pipeline using Materialized views. The
+end workflow ended up looking something more like this:
+
+    source -> file <- materialized <- tail | post -> tornado <- clients
+
+Basically, we have a source that is reading data from a remote source and writing the contents to
+a file. That file is being tailed by materialize and using the results of that to update
+materialized views. This is exactly as described in the demo docs.
+
+The parts I had to figure out today were the following:
+
+### Getting Started with Materialize
+I've never actually used Materialized. Pleasantly this took very little time and worked as
+expected.
+
+### Tail | Post
+Creating two scripts that could read the results of the tail and pipe that data into Tornado. I
+ended up needing two scripts, as I could not find a fast way to implement a non-blocking method
+for using `psycopg2 copy_expert` and ended up resortin to unix pipes. So, there is one script that
+reads the result of the tail and outputs that to stdout. The second script reads from stdin,
+parses the Materialize tail output, converts to JSON and POSTs the result of that to the Tornado
+server.
+
+### Tornado Server
+This part was pretty straightforward. Create a non-blocking Tornado server that can query the
+database using `momoko` as a non-blocking wrapper around `psycopg2`, accepts JSON blobs via a POST
+request and broadcast those post requests.
+
+### Javascript Client
+Pretty simple little bit of code to open a websocket, read the results and update HTML in
+response. The Top10 editors even get a nice little barchart that auto-updates in all sorts of
+funny ways.
+
+## Future Work
+
+I'd love to cut out most of the middlemen and simply expose changelogs (`tail`) over websockets
+from materialized. This would cut out most of the complexity. It would also enable a much simpler
+"base + patches" stream of updates, as the client wouldn't need to figure out how to synchronize
+the view and changelog.
 
 ## TODO
 
@@ -19,14 +63,15 @@ The rough dataflow will look like:
 - [x] Pipe output from `copy_expert` into a program that posts messages to tornado
 - [x] Write some javascript to receive these messages
 - [x] Write some javascript to update HTML on these messages!
-- [ ] Perhaps visualize the results of the various views?
+- [x] Perhaps visualize the results of the various views?
 
+- [ ] Implement a sane update mechanism for the visualization
 - [ ] Stretch Goal -- Stream Materialize internal tables to browser too
 - [ ] Can we find two datasets that are good to show off joins?
 
-## Not a Priority Anymore
+## Abandoned
 
-- [ ] Figure out how to use tail with Momoko
+- [ ] Figure out how to use tail with Momoko or Tornado
 
 ## Web Server Logic
 
