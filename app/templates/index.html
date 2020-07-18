@@ -1,28 +1,16 @@
 <html>
   <head>
     <title>{% block title %}Wikipedia Live Edits!{% end %}</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/vega@5.12.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.13.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.8.0"></script>
+
   </head>
   <body>
       <div id="edit counts"><h1><span id="counter">{{edit_count}}</span> Edits Made!</h1></div>
     <div id="title"><h1>Top 10 Editors</h1></div>
-    <div id="top10 editors">
-        <table>
-            <thead>
-                <tr>
-                    <th>Editor</th>
-                    <th>Count</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for (name, count) in editors %}
-                <tr>
-                    <td>{{name}}</td>
-                    <td>{{count}}<td>
-                </tr>
-                {% end %}
-            </tbody>
-        </table>
-    </div>
+    <div id="top_editors"></div>
 
     <script type="text/javascript">
         "use strict";
@@ -42,12 +30,67 @@
     <script type="text/javascript">
         "use strict";
 
+        var editors_histogram = {
+            $schema: 'https://vega.github.io/schema/vega-lite/v4.json',
+            mark: 'bar',
+            height: 800,
+            width: 800,
+            data: {name: 'top10'},
+            encoding: {
+                x: {field: 'editor', type: 'nominal', sort: 'y'},
+                y: {field: 'count', type: 'quantitative'},
+            }
+        };
+
+        var insert_values = [];
+        var delete_values = [];
+
+        vegaEmbed('#top_editors', editors_histogram).then(function(res) {
+
+            window.setInterval(function () {
+                console.log('insert');
+                console.log(insert_values);
+                console.log('delete');
+                console.log(delete_values);
+
+                var changeSet = vega.changeset()
+                        .insert(insert_values)
+                        .remove(function(d) {
+                            return delete_values.indexOf(d);
+                        });
+
+                res.view.change('top10', changeSet).run();
+
+                insert_values = [];
+                delete_values = [];
+            }, 1000);
+        });
+
         var path = "ws://" + location.host + "{{reverse_url('api/stream', 'top10')}}";
         var connection = new WebSocket(path);
 
         connection.onmessage = function(event) {
                 var data = JSON.parse(event.data);
-                console.log(data);
+                var operation = data['delta']['operation'];
+                var editor = data['delta']['columns'][0];
+                var count = data['delta']['columns'][1];
+
+                var d = {editor: editor, count: count};
+
+                if (operation == 'inserted') {
+                    // console.log('+1');
+                    insert_values.push(d)
+                }
+                if (operation == 'deleted') {
+                    // console.log('-1');
+                    var insert_index = insert_values.indexOf(d);
+                    if ( insert_index >= 0 ) {
+                        console.log('Remove insert that was not observed');
+                        insert_values.splice(insert_index, 1);
+                    } else {
+                        delete_values.push(d)
+                    }
+                }
         }
 
     </script>
