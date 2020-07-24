@@ -1,102 +1,105 @@
 # Streaming Materialize Updates to the Browser
 
-## Original Plan
+This project shows how to write a simple, end-to-end data processing pipeline that results in live
+updating visualizations in the browser. It works as follows:
 
-For today's Skunkworks project, I'm going to be showing how to continuously tail a materialized
-view and stream the results directly to one or more users' browsers.
+- Live updates to Wikipedia are streamed to a local file
+- Materialized watches this file, ingesting events and updating views in real time
+- A python process, per view, tails live updates from Materialize and `POST`s updates to a web
+  server
+- On each `POST` event, the web server broadcasts events to clients via websockets
+- On receiving each event, the client will redraw to display the new information
 
-The rough dataflow will look like:
+The entire flow of data is event-triggered. At no point do we poll for data or run batch queries.
+For a more detailed writeup, please see my [blog
+post](https://materialize.io/streaming-tail-to-the-browser-a-one-day-project/).
 
-    source -> materialized <- tornado <- clients
+## Running it locally
 
-## Where Did I End Up?
+Right now, the startup sequence must be carefully orchestrated and will require 5 terminal
+windows. The sequence of commands are:
 
-I was able to create an end-to-end, event driven streaming pipeline using Materialized views. The
-end workflow ended up looking something more like this:
+### Terminal 1 - Tail Wikipedia Edits
 
-    source -> file <- materialized <- tail | post -> tornado <- clients
+```sh
+./bin/stream_wikipedia
+```
 
-Basically, we have a source that is reading data from a remote source and writing the contents to
-a file. That file is being tailed by materialize and using the results of that to update
-materialized views. This is exactly as described in the demo docs.
+### Terminal 2 - Materialized
 
-The parts I had to figure out today were the following:
+```sh
+materialized -w 16
+```
 
-### Getting Started with Materialize
-I've never actually used Materialized. Pleasantly this took very little time and worked as
-expected.
+In another, temporary terminal, run:
 
-### Tail | Post
-Creating two scripts that could read the results of the tail and pipe that data into Tornado. I
-ended up needing two scripts, as I could not find a fast way to implement a non-blocking method
-for using `psycopg2 copy_expert` and ended up resortin to unix pipes. So, there is one script that
-reads the result of the tail and outputs that to stdout. The second script reads from stdin,
-parses the Materialize tail output, converts to JSON and POSTs the result of that to the Tornado
-server.
+```sh
+./bin/create_views
+```
 
-### Tornado Server
-This part was pretty straightforward. Create a non-blocking Tornado server that can query the
-database using `momoko` as a non-blocking wrapper around `psycopg2`, accepts JSON blobs via a POST
-request and broadcast those post requests.
+### Terminal 3 - Tornado App Server
 
-### Javascript Client
-Pretty simple little bit of code to open a websocket, read the results and update HTML in
-response. The Top10 editors even get a nice little barchart that auto-updates in all sorts of
-funny ways.
+```sh
+cd app && ./serve.py
+```
 
-## Future Work
+### Terminal 4 - Tail Top10
 
-I'd love to cut out most of the middlemen and simply expose changelogs (`tail`) over websockets
-from materialized. This would cut out most of the complexity. It would also enable a much simpler
-"base + patches" stream of updates, as the client wouldn't need to figure out how to synchronize
-the view and changelog.
+```sh
+./bin/stream_top10
+```
 
-## TODO
+### Terminal 5 - Tail Counts
 
-- [x] Spin up materialized and ingest wikipedia data
-- [x] Write script to create interesting materialized views
-- [x] Figure out how to tail messages from the console
-- [x] Get tail working in vanilla Python
-- [x] Spin up tornado to splat data onto the screen
-- [x] What's a good dataset to show this off?
-- [x] Come up with a few interesting materialized views.
-- [x] Pipe output from `copy_expert` into a program that posts messages to tornado
-- [x] Write some javascript to receive these messages
-- [x] Write some javascript to update HTML on these messages!
-- [x] Perhaps visualize the results of the various views?
+```sh
+./bin/stream_counts
+```
 
-- [ ] Implement a sane update mechanism for the visualization
-- [ ] Stretch Goal -- Stream Materialize internal tables to browser too
-- [ ] Can we find two datasets that are good to show off joins?
+### Open Browser!
 
-## Abandoned
+Linux:
 
-- [ ] Figure out how to use tail with Momoko or Tornado
+```sh
+xdg-open http://localhost:8875
+```
 
-## Web Server Logic
+MacOS (I think it's open?)
 
-- Accept an incoming connection request, `GET /view/stream`
-- Insert client socket onto list of listeners for `delta` messages
-- Query current view to produce a `diff` message.
+```sh
+open http://localhost:8875
+```
 
-## Client Side Logic
+## Skunksworks Day 2 Plan!
 
-The client will receive a stream of messages from the server. There will be two types of messages:
+- [ ] Fix initial state bug
+- [ ] Try psycopg3 to replace `tail | post` hacks
+- [ ] Write one or two more views
 
-    base
-    delta
+## Fixing the Initial State Bug
 
-A `base` message contains the results of the view at a given point in time, queried upon first
-connection by an individual client. The `delta` message is an array of inserts and deletes that
-should be applied continuously to base to keep the dataset in sync.
+`TAIL` gives a full stream of changes to the table that should be applied in order. There is
+actually no need to run a base query. For the first improvement, the plan is to have the Tornado
+server stored a compacted log of all updates from the `POST` handler.
 
-Clients should only ever see a single `base` message and should expect to see a never ending
-stream of `delta` messages.
+Then, the server logic will be:
 
-On initial load, the client may start seeing `delta` messages before it sees a `base` message.
-This is to ensure that the client sees all messages required to keep the dataset in sync. Clients
-should buffer, and optionally compact, all `delta` messages until the `base` message arrives.
+- On a new connection, write all messages in the buffer to the client.
+- On a new message, broadcast the message to all listeners.
 
-`delta` messages are considered idempotent. It's possible that the result of applying a `delta`
-message will result in no changes, as the `base` message query may already have the `delta`
-message applied within the database.
+The client logic will simply be:
+
+- Open websocket, get stream of updates, apply them in a compacted form
+
+### Tradeoff
+
+We're effectively storing a compacted view of the data in three places - Materialized, Tornado and
+the Client. I think this is okay.
+
+If we want to reduce the buffering in Tornado, then we have two options:
+
+- Create a TAIL stream per client (maybe figure out how to join streams once two clients are in
+  sync?). The dataset will never be buffered in Tornado. This has the potential downside of
+  creating one Postgres connection per client
+- Figure out how to query Materialize such the client can join the results of a `SELECT` with the
+  `TAIL` stream. Unfortunately, it appears that `SELECT` does not return the `timestamps`
+  necessary to write a correct update algorithm using `TAIL`.
