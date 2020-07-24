@@ -15,20 +15,38 @@ import tornado.websocket
 
 log = logging.getLogger('wikipedia_live.main')
 
+RowUpdate = collections.namedtuple('update', ['columns', 'operation', 'timestamp'])
 
 class Listeners:
 
     def __init__(self):
         self.listeners = collections.defaultdict(set)
+        self.cache = collections.defaultdict(set)
 
     def add(self, table_name, conn):
         """Insert this connection into the list that will be notified on new messages."""
         self.listeners[table_name].add(conn)
+        for update in self.cache[table_name]:
+            conn.write_message(update._asdict())
 
-    def broadcast(self, table_name, payload):
+    def broadcast(self, table_name, update):
         """Write the message to all listeners. May remove closed connections."""
-        if table_name not in self.listeners:
+
+        if update.operation == 'insert':
+            self.cache[table_name].add(update)
+        else:
+            assert(update.operation == 'delete')
+            try:
+                old_row = RowUpdate(update.columns, 'insert', update.timestamp)
+                self.cache[table_name].remove(old_row)
+            except KeyError:
+                # Differential may tell us about updates we've never observed
+                pass
+
+        if not self.listeners[table_name]:
             return
+
+        payload = update._asdict()
 
         closed_listeners = set()
         for listener in self.listeners[table_name]:
@@ -39,6 +57,10 @@ class Listeners:
 
         for closed_listener in closed_listeners:
             self.listeners.remove(closed_listener)
+
+    def clear_cache(self, table_name):
+        if table_name in self.cache:
+            del self.cache[table_name]
 
     def remove(self, table_name, conn):
         """Remove this connection from the list that will be notified on new messages."""
@@ -69,13 +91,7 @@ class BaseHandler(tornado.web.RequestHandler):
 class IndexHandler(BaseHandler):
 
     async def get(self):
-
-        counts_cursor = await self.mzql.execute('SELECT * FROM counter')
-        edit_count = counts_cursor.fetchone()[0]
-
-        editors_cursor = await self.mzql.execute('SELECT * FROM top10 ORDER BY count DESC')
-        editors = [(name, count) for (name, count) in editors_cursor]
-        self.render('index.html', edit_count=edit_count, editors=editors)
+        self.render('index.html')
 
 
 class StreamHandler(BaseWebSocketHandler):
@@ -91,9 +107,13 @@ class StreamHandler(BaseWebSocketHandler):
 class UpdateHandler(BaseHandler):
 
     async def post(self, table_name):
-        delta = tornado.escape.json_decode(self.request.body)
-        payload = {'table': table_name, 'delta': delta}
-        self.listeners.broadcast(table_name, payload)
+        # Would be nice to do RowUpdate(**contents) but we need to convert columns to a tuple :-/
+        contents = tornado.escape.json_decode(self.request.body)
+        update = RowUpdate(tuple(contents['columns']), contents['operation'], contents['timestamp'])
+        self.listeners.broadcast(table_name, update)
+
+    async def delete(self, table_name):
+        self.listeners.clear_cache(table_name)
 
 
 def configure_logging():

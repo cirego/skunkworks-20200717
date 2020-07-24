@@ -8,7 +8,7 @@
 
   </head>
   <body>
-      <div id="edit counts"><h1><span id="counter">{{edit_count}}</span> Edits Made!</h1></div>
+      <div id="edit counts"><h1><span id="counter"></span> Edits Made!</h1></div>
     <div id="title"><h1>Top 10 Editors</h1></div>
     <div id="top_editors"></div>
 
@@ -20,8 +20,8 @@
 
         connection.onmessage = function(event) {
                 var data = JSON.parse(event.data);
-                if (data['delta']['operation'] == 'inserted') {
-                    document.getElementById("counter").innerHTML = data['delta']['columns'][0]
+                if (data['operation'] == 'insert') {
+                    document.getElementById("counter").innerHTML = data['columns'][0]
                 }
         }
 
@@ -72,17 +72,17 @@
 
         connection.onmessage = function(event) {
                 var data = JSON.parse(event.data);
-                var operation = data['delta']['operation'];
-                var editor = data['delta']['columns'][0];
-                var count = data['delta']['columns'][1];
+                var operation = data['operation'];
+                var editor = data['columns'][0];
+                var count = data['columns'][1];
 
                 var d = {editor: editor, count: count};
 
-                if (operation == 'inserted') {
+                if (operation == 'insert') {
                     // console.log('+1');
                     insert_values.push(d)
                 }
-                if (operation == 'deleted') {
+                if (operation == 'delete') {
                     // console.log('-1');
                     var insert_index = insert_values.indexOf(d);
                     if ( insert_index >= 0 ) {
