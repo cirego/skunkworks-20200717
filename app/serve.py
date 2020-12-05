@@ -6,8 +6,7 @@ import os
 import pprint
 import sys
 
-import momoko
-import psycopg2
+import psycopg3
 import tornado.ioloop
 import tornado.platform.asyncio
 import tornado.web
@@ -16,23 +15,29 @@ import tornado.websocket
 log = logging.getLogger('wikipedia_live.main')
 
 
-class Listeners:
+class View:
 
     def __init__(self):
-        self.listeners = collections.defaultdict(set)
+        self.current_rows = []
+        self.current_timestamp = []
+        self.listeners = set([])
 
-    def add(self, table_name, conn):
+    def add_listener(self, conn):
         """Insert this connection into the list that will be notified on new messages."""
-        self.listeners[table_name].add(conn)
+        # Write the latest view state to catch this listener up to the current state of the world
+        conn.write_message({'deleted': [],
+                            'inserted': self.current_rows,
+                            'timestamp': self.current_timestamp})
+        self.listeners.add(conn)
 
-    def broadcast(self, table_name, payload):
+    def broadcast(self, payload):
         """Write the message to all listeners. May remove closed connections."""
-        if table_name not in self.listeners:
-            return
 
         closed_listeners = set()
-        for listener in self.listeners[table_name]:
+        for listener in self.listeners:
             try:
+                # Each broadcast is a dictionary with two keys: 'inserted' and 'deletes'
+                # The values are lists of rows, where each row is a list of column values
                 listener.write_message(payload)
             except tornado.websocket.WebSocketClosedError:
                 closed_listeners.add(listener)
@@ -40,61 +45,94 @@ class Listeners:
         for closed_listener in closed_listeners:
             self.listeners.remove(closed_listener)
 
-    def remove(self, table_name, conn):
+    def remove_listener(self, conn):
         """Remove this connection from the list that will be notified on new messages."""
         try:
-            self.listeners[table_name].remove(conn)
+            self.listeners.remove(conn)
         except KeyError:
             pass
 
+    def update(self, deleted, inserted, timestamp):
+        """Update our internal view based on this diff."""
+        self.current_timestamp = timestamp
+        # Keep any rows that have not been deleted
+        self.current_rows = [r for r in self.current_rows if r not in deleted]
+        # And add any rows that have been inserted
+        self.current_rows.extend(inserted)
 
-class BaseWebSocketHandler(tornado.websocket.WebSocketHandler):
+        # If we have listeners configured, broadcast this diff
+        if self.listeners:
+            payload = {'deleted': deleted,
+                       'inserted': inserted,
+                       'timestamp': timestamp}
 
-    @property
-    def listeners(self):
-        return self.application.listeners
-
-
-class BaseHandler(tornado.web.RequestHandler):
-
-    @property
-    def listeners(self):
-        return self.application.listeners
-
-    @property
-    def mzql(self):
-        return self.application.mzql
+            self.broadcast(payload)
 
 
-class IndexHandler(BaseHandler):
+class IndexHandler(tornado.web.RequestHandler):
 
     async def get(self):
+        async with await self.application.mzql_connection() as conn:
+            async with await conn.cursor() as cursor:
+                query = 'SELECT * FROM counter'
+                async with await cursor.execute(query) as counts:
+                    assert counts.rowcount == 1
+                    row = await counts.fetchone()
+                    edit_count = row[0]
 
-        counts_cursor = await self.mzql.execute('SELECT * FROM counter')
-        edit_count = counts_cursor.fetchone()[0]
-
-        editors_cursor = await self.mzql.execute('SELECT * FROM top10 ORDER BY count DESC')
-        editors = [(name, count) for (name, count) in editors_cursor]
-        self.render('index.html', edit_count=edit_count, editors=editors)
+        self.render('index.html', edit_count=edit_count)
 
 
-class StreamHandler(BaseWebSocketHandler):
+class StreamHandler(tornado.websocket.WebSocketHandler):
 
-    def open(self, table):
-        self.table_name = table
-        self.listeners.add(self.table_name, self)
+    def open(self, view):
+        self.view = view
+        self.application.views[view].add_listener(self)
 
     def on_close(self):
-        self.listeners.remove(self.table_name, self)
+        self.application.views[self.view].remove_listener(self)
 
 
-class UpdateHandler(BaseHandler):
+class Application(tornado.web.Application):
 
-    async def post(self, table_name):
-        delta = tornado.escape.json_decode(self.request.body)
-        payload = {'table': table_name, 'delta': delta}
-        self.listeners.broadcast(table_name, payload)
+    def __init__(self, *args, dsn, ioloop, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dsn = dsn
 
+        configured_views = ['counter', 'top10']
+        self.views = {view: View() for view in configured_views}
+
+        for view in configured_views:
+            ioloop.spawn_callback(self.tail_view, view)
+
+    def mzql_connection(self):
+        """Return a psycopg3.AsyncConnection object to our Materialize database."""
+        return psycopg3.AsyncConnection.connect(self.dsn)
+
+    async def tail_view(self, view_name):
+        """Spawn a coroutine to tail the view and update listeners on changes."""
+        log.info('Spawning coroutine to TAIL VIEW "%s"', view_name)
+        async with await self.mzql_connection() as conn:
+            async with await conn.cursor() as cursor:
+                query = f'COPY (TAIL {view_name} WITH (PROGRESS)) TO STDOUT'
+                async with cursor.copy(query) as tail:
+                    inserted = []
+                    deleted = []
+                    async for row in tail:
+                        row = row.decode('utf-8')
+                        (timestamp, progressed, diff, *columns) = row.strip().split("\t")
+
+                        if progressed == 't':
+                            assert diff == '\\N'
+                            self.views[view_name].update(deleted, inserted, timestamp)
+                            inserted = []
+                            deleted = []
+                        elif diff == '-1':
+                            deleted.append(columns)
+                        elif diff == '1':
+                            inserted.append(columns)
+                        else:
+                            log.error('Failed to correctly decode row %s', row.strip())
 
 def configure_logging():
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
@@ -106,29 +144,19 @@ def run():
     handlers = [
         tornado.web.url(r'/', IndexHandler, name='index'),
         tornado.web.url(r'/api/v1/stream/(.*)', StreamHandler, name='api/stream'),
-        tornado.web.url(r'/api/v1/update/(.*)', UpdateHandler, name='api/update'),
     ]
 
     base_dir = os.path.dirname(__file__)
     static_path = os.path.join(base_dir, 'static')
     template_path = os.path.join(base_dir, 'templates')
 
-    app = tornado.web.Application(handlers,
-                                  static_path=static_path,
-                                  template_path=template_path,
-                                  debug=True)
-
-    app.listeners = Listeners()
-
-    dsn = 'host=localhost port=6875 dbname=materialize'
-    app.mzql = momoko.Pool(dsn=dsn)
-
-    # Connect Momoko before starting Tornado's event loop
-    # This let's Momoko create an initial connection to the database
-    future = app.mzql.connect()
     ioloop = tornado.ioloop.IOLoop.current()
-    ioloop.add_future(future, lambda f: ioloop.stop())
-    ioloop.start()
+    app = Application(handlers,
+                      static_path=static_path,
+                      template_path=template_path,
+                      ioloop=ioloop,
+                      debug=True,
+                      dsn='postgresql://localhost:6875/materialize')
 
     port = 8875
     log.info('Port %d ready to rumble!', port)

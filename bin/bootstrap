@@ -2,6 +2,8 @@
 
 set -ex
 
-sudo apt install -y python3-psycopg2
+# Install psycopg3 from source, not pip
+# Once psycopg3 is published, uncomment the following
+# sudo pip install psycopg3
 
-pip3 install tornado==5 momoko
+pip3 install tornado

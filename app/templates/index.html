@@ -2,9 +2,9 @@
   <head>
     <title>{% block title %}Wikipedia Live Edits!{% end %}</title>
 
-    <script src="https://cdn.jsdelivr.net/npm/vega@5.12.1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.13.1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.8.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-lite@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 
   </head>
   <body>
@@ -20,9 +20,9 @@
 
         connection.onmessage = function(event) {
                 var data = JSON.parse(event.data);
-                if (data['delta']['operation'] == 'inserted') {
-                    document.getElementById("counter").innerHTML = data['delta']['columns'][0]
-                }
+                // Counter is a single row table, so every update should contain one insert and
+                // maybe one delete (which we don't care about
+                document.getElementById("counter").innerHTML = data.inserted[0][0]
         }
 
     </script>
@@ -42,56 +42,29 @@
             }
         };
 
-        var insert_values = [];
-        var delete_values = [];
+        vegaEmbed('#top_editors', editors_histogram).then(function(chart) {
 
-        vegaEmbed('#top_editors', editors_histogram).then(function(res) {
+            var path = "ws://" + location.host + "{{reverse_url('api/stream', 'top10')}}";
+            var connection = new WebSocket(path);
 
-            window.setInterval(function () {
-                console.log('insert');
-                console.log(insert_values);
-                console.log('delete');
-                console.log(delete_values);
+            function convert_to_editor(row) {
+                return {editor: row[0], count: parseInt(row[1])};
+            }
 
-                var changeSet = vega.changeset()
-                        .insert(insert_values)
-                        .remove(function(d) {
-                            return delete_values.indexOf(d);
-                        });
+            function editor_in_array(e, arr) {
+                return arr.find(i => i.editor === e.editor && i.count === e.count);
+            }
 
-                res.view.change('top10', changeSet).run();
+            connection.onmessage = function(event) {
+                    var data = JSON.parse(event.data);
+                    var delete_values = data.deleted.map(convert_to_editor);
+                    var changeSet = vega.changeset()
+                            .insert(data.inserted.map(convert_to_editor))
+                            .remove(d => editor_in_array(d, delete_values));
 
-                insert_values = [];
-                delete_values = [];
-            }, 1000);
+                    chart.view.change('top10', changeSet).resize().run();
+            }
         });
-
-        var path = "ws://" + location.host + "{{reverse_url('api/stream', 'top10')}}";
-        var connection = new WebSocket(path);
-
-        connection.onmessage = function(event) {
-                var data = JSON.parse(event.data);
-                var operation = data['delta']['operation'];
-                var editor = data['delta']['columns'][0];
-                var count = data['delta']['columns'][1];
-
-                var d = {editor: editor, count: count};
-
-                if (operation == 'inserted') {
-                    // console.log('+1');
-                    insert_values.push(d)
-                }
-                if (operation == 'deleted') {
-                    // console.log('-1');
-                    var insert_index = insert_values.indexOf(d);
-                    if ( insert_index >= 0 ) {
-                        console.log('Remove insert that was not observed');
-                        insert_values.splice(insert_index, 1);
-                    } else {
-                        delete_values.push(d)
-                    }
-                }
-        }
 
     </script>
   </body>
