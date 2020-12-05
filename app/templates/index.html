@@ -9,8 +9,9 @@
   </head>
   <body>
       <div id="edit counts"><h1><span id="counter">{{edit_count}}</span> Edits Made!</h1></div>
-    <div id="title"><h1>Top 10 Editors</h1></div>
-    <div id="top_editors"></div>
+      <div id="top_users"></div>
+      <div id="top_servers"></div>
+      <div id="top_pages"></div>
 
     <script type="text/javascript">
         "use strict";
@@ -30,41 +31,52 @@
     <script type="text/javascript">
         "use strict";
 
-        var editors_histogram = {
-            $schema: 'https://vega.github.io/schema/vega-lite/v4.json',
-            mark: 'bar',
-            height: 800,
-            width: 800,
-            data: {name: 'top10'},
-            encoding: {
-                x: {field: 'editor', type: 'nominal', sort: 'y'},
-                y: {field: 'count', type: 'quantitative'},
-            }
-        };
+        function setup_view(view_name) {
 
-        vegaEmbed('#top_editors', editors_histogram).then(function(chart) {
+            var histogram = {
+                $schema: 'https://vega.github.io/schema/vega-lite/v4.json',
+                mark: 'bar',
+                height: 400,
+                width: 800,
+                data: {name: 'data'},
+                encoding: {
+                    x: {field: 'subject', type: 'nominal', sort: 'y'},
+                    y: {field: 'count', type: 'quantitative'},
+                }
+            };
 
-            var path = "ws://" + location.host + "{{reverse_url('api/stream', 'top10')}}";
-            var connection = new WebSocket(path);
-
-            function convert_to_editor(row) {
-                return {editor: row[0], count: parseInt(row[1])};
+            var config = {
+                actions: false
             }
 
-            function editor_in_array(e, arr) {
-                return arr.find(i => i.editor === e.editor && i.count === e.count);
-            }
+            vegaEmbed('#' + view_name, histogram, config).then(function(chart) {
 
-            connection.onmessage = function(event) {
-                    var data = JSON.parse(event.data);
-                    var delete_values = data.deleted.map(convert_to_editor);
-                    var changeSet = vega.changeset()
-                            .insert(data.inserted.map(convert_to_editor))
-                            .remove(d => editor_in_array(d, delete_values));
+                var path = "ws://" + location.host + "{{reverse_url('api/stream', '')}}" + view_name;
+                var connection = new WebSocket(path);
 
-                    chart.view.change('top10', changeSet).resize().run();
-            }
-        });
+                function convert_to_subject(row) {
+                    return {subject: row[0], count: parseInt(row[1])};
+                }
+
+                function subject_in_array(e, arr) {
+                    return arr.find(i => i.subject === e.subject && i.count === e.count);
+                }
+
+                connection.onmessage = function(event) {
+                        var data = JSON.parse(event.data);
+                        var delete_values = data.deleted.map(convert_to_subject);
+                        var changeSet = vega.changeset()
+                                .insert(data.inserted.map(convert_to_subject))
+                                .remove(d => subject_in_array(d, delete_values));
+
+                        chart.view.change('data', changeSet).resize().run();
+                }
+            });
+
+        }
+
+        var views = ["top_users", "top_servers", "top_pages"];
+        views.forEach(v => setup_view(v));
 
     </script>
   </body>

@@ -30,8 +30,20 @@ CREATE MATERIALIZED VIEW recentchanges AS
 CREATE MATERIALIZED VIEW counter AS
     SELECT COUNT(*) FROM recentchanges;
 
-CREATE MATERIALIZED VIEW useredits AS
+CREATE MATERIALIZED VIEW user_edits AS
     SELECT user, count(*) FROM recentchanges GROUP BY user;
 
-CREATE MATERIALIZED VIEW top10 AS
-    SELECT * FROM useredits ORDER BY count DESC LIMIT 10;
+CREATE MATERIALIZED VIEW top_users AS
+    SELECT * FROM user_edits ORDER BY count DESC LIMIT 10;
+
+CREATE MATERIALIZED VIEW server_edits AS
+    SELECT server_name, count(*) FROM recentchanges GROUP BY server_name;
+
+CREATE MATERIALIZED VIEW top_servers AS
+    SELECT * FROM server_edits ORDER BY count DESC LIMIT 10;
+
+CREATE MATERIALIZED VIEW page_edits AS
+    SELECT title, count(*) FROM recentchanges GROUP BY title;
+
+CREATE MATERIALIZED VIEW top_pages AS
+    SELECT * FROM page_edits ORDER BY count DESC LIMIT 10;

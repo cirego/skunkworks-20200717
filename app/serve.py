@@ -99,7 +99,7 @@ class Application(tornado.web.Application):
         super().__init__(*args, **kwargs)
         self.dsn = dsn
 
-        configured_views = ['counter', 'top10']
+        configured_views = ['counter', 'top_users', 'top_servers', 'top_pages']
         self.views = {view: View() for view in configured_views}
 
         for view in configured_views:
